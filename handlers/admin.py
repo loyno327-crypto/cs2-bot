@@ -1,4 +1,5 @@
 import random
+import html
 
 from aiogram import Router, Bot
 from aiogram.filters import Command
@@ -191,7 +192,8 @@ async def cmd_admin_help(message: Message):
 
     lines = ["🛠 <b>Админ-команды бота</b>\n"]
     for cmd, description in ADMIN_COMMANDS:
-        lines.append(f"<code>{cmd}</code>\n{description}\n")
+        safe_cmd = html.escape(cmd)
+        lines.append(f"<code>{safe_cmd}</code>\n{description}\n")
 
     await message.answer("\n".join(lines))
 
