@@ -28,6 +28,8 @@ ADMIN_COMMANDS = [
     ("/update_menu", "Разослать всем актуальную клавиатуру меню (если она не обновилась)."),
     ("/stats_global", "Общая статистика бота: игроки, экономика, кейсы, дуэли и т.д."),
     ("/force_jackpot <сумма> <кол-во победителей>", "Принудительно разыграть джекпот прямо сейчас, с любой суммой и числом победителей."),
+    ("/remove_from_top_drops <user_id>", "Убрать одного игрока из топа по дропу (не трогает его инвентарь)."),
+    ("/clear_top_drops", "Полностью обнулить топ по дропу для всех игроков (не трогает инвентари)."),
     ("/start_event <часы> <xp_множитель> <монеты_множитель> <скидка%> <название>", "Запустить тематический ивент на заданное время."),
     ("/stop_event", "Досрочно завершить текущий ивент."),
     ("/admin_help", "Показать этот список команд."),
@@ -329,6 +331,56 @@ async def cmd_force_jackpot(message: Message, bot: Bot):
     await status_msg.edit_text(
         f"✅ Джекпот разыгран: {names_str}, по {amount_each} монет каждому.\n"
         f"📢 Уведомлено: {sent}, не доставлено: {failed}."
+    )
+
+
+@router.message(Command("remove_from_top_drops"))
+async def cmd_remove_from_top_drops(message: Message):
+    """Секретная команда: /remove_from_top_drops <user_id>
+    Убирает ОДНОГО игрока из топа по дропу (кнопка «🏆 Топ» -> «💎 По дропу»),
+    удаляя всю его историю из журнала drop_log. Текущий инвентарь игрока
+    НЕ трогается — предметы у него остаются, просто пропадают из топа."""
+    if not _is_admin(message.from_user.id):
+        return
+
+    parts = message.text.split()
+    if len(parts) != 2:
+        await message.answer(
+            "Использование: <code>/remove_from_top_drops user_id</code>\n"
+            "Пример: <code>/remove_from_top_drops 123456789</code>"
+        )
+        return
+
+    try:
+        target_id = int(parts[1])
+    except ValueError:
+        await message.answer("user_id должен быть целым числом.")
+        return
+
+    removed = db.remove_user_drop_log(target_id)
+
+    if removed == 0:
+        await message.answer(f"У игрока <code>{target_id}</code> и так не было записей в топе по дропу.")
+        return
+
+    await message.answer(
+        f"✅ Готово. Игрок <code>{target_id}</code> убран из топа по дропу "
+        f"(удалено записей: {removed}). Инвентарь игрока не тронут."
+    )
+
+
+@router.message(Command("clear_top_drops"))
+async def cmd_clear_top_drops(message: Message):
+    """Секретная команда: /clear_top_drops
+    Полностью обнуляет топ по дропу — для ВСЕХ игроков сразу. Инвентари
+    игроков не трогаются, обнуляется только история для топа (drop_log)."""
+    if not _is_admin(message.from_user.id):
+        return
+
+    removed = db.clear_drop_log()
+    await message.answer(
+        f"✅ Топ по дропу полностью обнулён (удалено записей: {removed}). "
+        f"Инвентари игроков не тронуты."
     )
 
 

@@ -342,6 +342,36 @@ def get_top_users_by_level(limit: int = 10):
     return rows
 
 
+def clear_drop_log() -> int:
+    """Полностью обнуляет топ по дропу (журнал drop_log) для ВСЕХ игроков —
+    используется командой админа /clear_top_drops. НЕ трогает инвентарь
+    игроков (drop_log — это только история для топа, предметы у игроков
+    остаются на месте). Возвращает, сколько записей было удалено."""
+    conn = get_connection()
+    cur = conn.cursor()
+    cur.execute("SELECT COUNT(*) AS c FROM drop_log")
+    count = cur.fetchone()["c"]
+    cur.execute("DELETE FROM drop_log")
+    conn.commit()
+    conn.close()
+    return count
+
+
+def remove_user_drop_log(user_id: int) -> int:
+    """Убирает ОДНОГО игрока из топа по дропу — удаляет всю его историю из
+    drop_log (используется командой админа /remove_from_top_drops). Как и
+    clear_drop_log, НЕ трогает текущий инвентарь игрока — только историю
+    для топа. Возвращает, сколько записей было удалено."""
+    conn = get_connection()
+    cur = conn.cursor()
+    cur.execute("SELECT COUNT(*) AS c FROM drop_log WHERE user_id = ?", (user_id,))
+    count = cur.fetchone()["c"]
+    cur.execute("DELETE FROM drop_log WHERE user_id = ?", (user_id,))
+    conn.commit()
+    conn.close()
+    return count
+
+
 def get_top_drops(limit: int = 10):
     """Топ по дропу: для КАЖДОГО игрока берём его самый дорогой предмет,
     когда-либо выпавший из кейсов за ВСЁ время (в том числе уже проданные,
@@ -374,10 +404,20 @@ def get_top_drops(limit: int = 10):
 
 # ---------- Инвентарь ----------
 
-def add_item(user_id: int, item_name: str, item_rarity: str, item_price: int) -> int:
-    """Добавляет предмет в инвентарь пользователя, а также пишет тот же
-    дроп в drop_log — постоянный журнал, который не трогается при продаже,
-    апгрейде или сгорании предмета (нужен для топа "по дропу за всё время").
+def add_item(user_id: int, item_name: str, item_rarity: str, item_price: int, log_drop: bool = True) -> int:
+    """Добавляет предмет в инвентарь пользователя.
+
+    Если log_drop=True (по умолчанию — так вызывается при ВЫПАДЕНИИ предмета
+    из кейса), дополнительно пишет тот же дроп в drop_log — постоянный
+    журнал, который не трогается при продаже, апгрейде или сгорании
+    предмета (нужен для топа "по дропу за всё время").
+
+    Если log_drop=False — предмет попадает в инвентарь, но в drop_log НЕ
+    пишется. Используется, когда предмет получен НЕ из кейса, а, например,
+    как результат апгрейда (handlers/upgrade.py) — топ по дропу должен
+    показывать только то, что реально выпало из кейса, а не то, что игрок
+    получил, объединив другие предметы.
+
     Возвращает id предмета в инвентаре."""
     conn = get_connection()
     cur = conn.cursor()
@@ -388,11 +428,12 @@ def add_item(user_id: int, item_name: str, item_rarity: str, item_price: int) ->
         (user_id, item_name, item_rarity, item_price, now)
     )
     item_id = cur.lastrowid
-    cur.execute(
-        "INSERT INTO drop_log (user_id, item_name, item_rarity, item_price, obtained_at) "
-        "VALUES (?, ?, ?, ?, ?)",
-        (user_id, item_name, item_rarity, item_price, now)
-    )
+    if log_drop:
+        cur.execute(
+            "INSERT INTO drop_log (user_id, item_name, item_rarity, item_price, obtained_at) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (user_id, item_name, item_rarity, item_price, now)
+        )
     conn.commit()
     conn.close()
     return item_id

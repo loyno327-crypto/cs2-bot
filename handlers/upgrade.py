@@ -234,7 +234,7 @@ async def do_upgrade(callback: CallbackQuery):
 
         for i in items:
             db.remove_item(i["id"], user_id)
-        db.add_item(user_id, new_name, new_rarity, new_price)
+        db.add_item(user_id, new_name, new_rarity, new_price, log_drop=False)
         db.increment_stat(user_id, "upgrades_success")
         xp_result = db.add_xp(user_id, config.XP_UPGRADE_SUCCESS)
 
