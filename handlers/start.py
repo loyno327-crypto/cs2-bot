@@ -15,6 +15,7 @@ def main_menu_keyboard() -> ReplyKeyboardMarkup:
             [KeyboardButton(text="🛠 Апгрейд"), KeyboardButton(text="⚔️ Дуэль")],
             [KeyboardButton(text="🚀 Краш"), KeyboardButton(text="🏆 Топ")],
             [KeyboardButton(text="🎉 Бонус"), KeyboardButton(text="🎰 Джекпот")],
+            [KeyboardButton(text="🎲 Слот"), KeyboardButton(text="🔥 Ивент")],
             [KeyboardButton(text="👤 Профиль")],
         ],
         resize_keyboard=True

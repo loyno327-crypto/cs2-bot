@@ -7,7 +7,7 @@
 import sqlite3
 import shutil
 import os
-from datetime import datetime
+from datetime import datetime, timedelta
 import config
 
 
@@ -105,6 +105,21 @@ def init_db():
         )
     """)
 
+    # Тематические ивенты — всегда одна строка с id = 1. Пока ends_at пуст
+    # или уже в прошлом, считаем, что активного ивента нет (см. get_active_event).
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS events (
+            id INTEGER PRIMARY KEY,
+            title TEXT,
+            xp_multiplier REAL DEFAULT 1.0,
+            money_multiplier REAL DEFAULT 1.0,
+            case_discount_percent INTEGER DEFAULT 0,
+            started_at TEXT,
+            ends_at TEXT,
+            started_by INTEGER
+        )
+    """)
+
     conn.commit()
 
     cur.execute("SELECT id FROM jackpot WHERE id = 1")
@@ -113,6 +128,15 @@ def init_db():
             "INSERT INTO jackpot (id, amount, last_draw_at, last_winner_id, last_winner_amount) "
             "VALUES (1, 0, ?, NULL, 0)",
             (datetime.now().isoformat(),)
+        )
+        conn.commit()
+
+    cur.execute("SELECT id FROM events WHERE id = 1")
+    if cur.fetchone() is None:
+        cur.execute(
+            "INSERT INTO events (id, title, xp_multiplier, money_multiplier, "
+            "case_discount_percent, started_at, ends_at, started_by) "
+            "VALUES (1, NULL, 1.0, 1.0, 0, NULL, NULL, NULL)"
         )
         conn.commit()
 
@@ -135,6 +159,8 @@ def init_db():
         ("jackpot_wins", "INTEGER DEFAULT 0"),
         ("xp", "INTEGER DEFAULT 0"),
         ("level", "INTEGER DEFAULT 1"),
+        ("slot_spins", "INTEGER DEFAULT 0"),
+        ("slot_wins", "INTEGER DEFAULT 0"),
     ]
     for col_name, col_type in new_columns:
         try:
@@ -496,8 +522,46 @@ def delete_duel(duel_id: int):
 STAT_COLUMNS = {
     "work_correct", "work_wrong", "cases_opened",
     "duels_played", "duels_won", "upgrades_success", "upgrades_failed",
-    "jackpot_wins",
+    "jackpot_wins", "slot_spins", "slot_wins",
 }
+
+# Поля пользователя, которые админ может менять командой /set_user (см.
+# handlers/admin.py). Список explicit — чтобы имя колонки нельзя было
+# подставить снаружи (например, через текст команды) и получить SQL-инъекцию
+# или доступ к служебным полям вроде user_id.
+EDITABLE_USER_FIELDS = {
+    "balance": int,
+    "level": int,
+    "xp": int,
+    "username": str,
+    "work_correct": int,
+    "work_wrong": int,
+    "cases_opened": int,
+    "duels_played": int,
+    "duels_won": int,
+    "upgrades_success": int,
+    "upgrades_failed": int,
+    "jackpot_wins": int,
+    "slot_spins": int,
+    "slot_wins": int,
+    "total_earned": int,
+    "total_spent": int,
+}
+
+
+def set_user_field(user_id: int, field: str, value):
+    """Устанавливает АБСОЛЮТНОЕ значение одного поля пользователя (в отличие
+    от add_balance, который добавляет дельту). Используется командой админа
+    /set_user для правки уровня, баланса, опыта и т.д. field обязательно
+    должен быть в EDITABLE_USER_FIELDS — это белый список, защищающий от
+    SQL-инъекции через имя колонки."""
+    if field not in EDITABLE_USER_FIELDS:
+        raise ValueError(f"Недопустимое поле: {field}")
+    conn = get_connection()
+    cur = conn.cursor()
+    cur.execute(f"UPDATE users SET {field} = ? WHERE user_id = ?", (value, user_id))
+    conn.commit()
+    conn.close()
 
 
 def increment_stat(user_id: int, column: str, amount: int = 1):
@@ -635,7 +699,14 @@ def add_xp(user_id: int, amount: int):
     """Начисляет опыт и обрабатывает повышение уровня (может быть сразу
     несколько уровней за раз, если начислили много опыта). За каждый новый
     уровень игрок получает бонус монетами (см. config.LEVEL_UP_BONUS_PER_LEVEL).
+    Если сейчас идёт тематический ивент с xp_multiplier — amount умножается
+    на него ПЕРЕД начислением (единая точка применения множителя опыта сразу
+    для всех источников: работа, кейсы, дуэли, апгрейд, краш, слоты).
     Возвращает информацию о результате, включая флаг leveled_up."""
+    event = get_active_event()
+    if event and event["xp_multiplier"] != 1.0:
+        amount = int(round(amount * event["xp_multiplier"]))
+
     conn = get_connection()
     cur = conn.cursor()
     cur.execute("SELECT xp, level FROM users WHERE user_id = ?", (user_id,))
@@ -711,3 +782,106 @@ def get_global_stats():
         "items_total_value": inv_row["items_total_value"],
         "jackpot_amount": jackpot_row["amount"] if jackpot_row else 0,
     }
+
+
+def force_draw_jackpot(winner_ids: list, amount_each: int):
+    """Принудительный розыгрыш джекпота (команда админа /force_jackpot) —
+    в отличие от draw_jackpot_multi, которая вызывается фоновой задачей по
+    расписанию и предполагает, что в копилке уже гарантированно достаточно
+    монет, эта версия рассчитана на то, что админ может задать сумму БОЛЬШЕ,
+    чем сейчас в копилке (например, устроить праздничный розыгрыш). В этом
+    случае копилка просто обнуляется (а не уходит в минус), а недостающие
+    монеты фактически допечатывает admin-команда, которая это вызвала —
+    так же, как /give допечатывает монеты вручную."""
+    total = amount_each * len(winner_ids)
+    ids_str = ",".join(str(uid) for uid in winner_ids)
+    conn = get_connection()
+    cur = conn.cursor()
+    cur.execute("SELECT amount FROM jackpot WHERE id = 1")
+    row = cur.fetchone()
+    current = row["amount"] if row else 0
+    new_amount = max(current - total, 0)
+    cur.execute(
+        "UPDATE jackpot SET amount = ?, last_draw_at = ?, last_winner_ids = ?, "
+        "last_winner_amount = ? WHERE id = 1",
+        (new_amount, datetime.now().isoformat(), ids_str, amount_each)
+    )
+    conn.commit()
+    conn.close()
+
+
+# ---------- Тематические ивенты ----------
+
+def get_active_event():
+    """Возвращает словарь с данными активного ивента, если он сейчас идёт
+    (ends_at задан и ещё не наступил), иначе None. Ивент не удаляется из
+    таблицы по истечении времени — просто перестаёт считаться активным,
+    поэтому /event_status может показать, что "ивент закончился", а не
+    просто "ивента никогда не было"."""
+    conn = get_connection()
+    cur = conn.cursor()
+    cur.execute("SELECT * FROM events WHERE id = 1")
+    row = cur.fetchone()
+    conn.close()
+
+    if row is None or not row["ends_at"]:
+        return None
+    if datetime.now() >= datetime.fromisoformat(row["ends_at"]):
+        return None
+
+    return {
+        "title": row["title"],
+        "xp_multiplier": row["xp_multiplier"] or 1.0,
+        "money_multiplier": row["money_multiplier"] or 1.0,
+        "case_discount_percent": row["case_discount_percent"] or 0,
+        "started_at": row["started_at"],
+        "ends_at": row["ends_at"],
+        "started_by": row["started_by"],
+    }
+
+
+def get_event_raw():
+    """Возвращает сырую строку events (даже если ивент уже закончился) —
+    нужно, например, чтобы показать, когда закончился прошлый ивент."""
+    conn = get_connection()
+    cur = conn.cursor()
+    cur.execute("SELECT * FROM events WHERE id = 1")
+    row = cur.fetchone()
+    conn.close()
+    return row
+
+
+def start_event(title: str, hours: float, xp_multiplier: float,
+                money_multiplier: float, case_discount_percent: int,
+                started_by: int):
+    """Запускает тематический ивент на `hours` часов вперёд от текущего
+    момента. Полностью перезаписывает предыдущий ивент (даже если тот ещё
+    шёл) — то есть повторный вызов /start_event эффективно продлевает или
+    меняет текущий ивент."""
+    now = datetime.now()
+    ends_at = now + timedelta(hours=hours)
+    conn = get_connection()
+    cur = conn.cursor()
+    cur.execute(
+        "UPDATE events SET title = ?, xp_multiplier = ?, money_multiplier = ?, "
+        "case_discount_percent = ?, started_at = ?, ends_at = ?, started_by = ? "
+        "WHERE id = 1",
+        (title, xp_multiplier, money_multiplier, case_discount_percent,
+         now.isoformat(), ends_at.isoformat(), started_by)
+    )
+    conn.commit()
+    conn.close()
+
+
+def stop_event():
+    """Досрочно завершает текущий ивент (просто переносит ends_at в прошлое,
+    сама запись с настройками остаётся — на случай, если админ захочет
+    посмотреть, каким был последний ивент)."""
+    conn = get_connection()
+    cur = conn.cursor()
+    cur.execute(
+        "UPDATE events SET ends_at = ? WHERE id = 1",
+        (datetime.now().isoformat(),)
+    )
+    conn.commit()
+    conn.close()

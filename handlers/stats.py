@@ -67,7 +67,10 @@ async def show_profile(message: Message):
         f"• Удачных / сгорело: {user['upgrades_success']} / {user['upgrades_failed']} "
         f"({_percent(user['upgrades_success'], upg_total)})\n\n"
         f"🎰 <b>Джекпот</b>\n"
-        f"• Выигрышей: {user['jackpot_wins'] or 0}"
+        f"• Выигрышей: {user['jackpot_wins'] or 0}\n\n"
+        f"🎲 <b>Слот</b>\n"
+        f"• Круток: {user['slot_spins'] or 0}, побед: {user['slot_wins'] or 0} "
+        f"({_percent(user['slot_wins'] or 0, user['slot_spins'] or 0)})"
     )
 
     await message.answer(text)

@@ -56,8 +56,17 @@ def case_xp_reward(case: dict) -> int:
 
 
 def case_discounted_price(case: dict, level: int) -> int:
-    """Цена открытия кейса с учётом уровневой скидки игрока."""
+    """Цена открытия кейса с учётом уровневой скидки игрока и, если сейчас
+    идёт тематический ивент с доп. скидкой на кейсы (см. /start_event),
+    ещё и её — суммарная скидка не может превысить 90%, чтобы кейсы не
+    стали фактически бесплатными из-за опечатки в параметрах ивента."""
     discount = config.level_discount_percent(level)
+
+    event = db.get_active_event()
+    if event and event["case_discount_percent"] > 0:
+        discount += event["case_discount_percent"]
+    discount = min(discount, 90)
+
     price = case["price"] * (100 - discount) // 100
     return max(int(price), 1)
 

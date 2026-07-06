@@ -116,6 +116,10 @@ async def claim_daily_bonus(message: Message):
             return
 
     reward = random.randint(config.DAILY_BONUS_MIN, config.DAILY_BONUS_MAX)
+    event = db.get_active_event()
+    if event and event["money_multiplier"] != 1.0:
+        reward = int(round(reward * event["money_multiplier"]))
+
     db.add_balance(user_id, reward)
     db.set_last_bonus_time(user_id, datetime.now().isoformat())
     db.set_bonus_notified(user_id, 0)  # чтобы фоновая задача снова уведомила, когда бонус будет готов

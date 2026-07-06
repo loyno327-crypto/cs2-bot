@@ -10,7 +10,7 @@ from aiogram.enums import ParseMode
 import config
 from database import init_db
 import database as db
-from handlers import start, work, cases, inventory, upgrade, pvp, top, stats, jackpot, admin, crash
+from handlers import start, work, cases, inventory, upgrade, pvp, top, stats, jackpot, admin, crash, slots, events
 
 
 async def bonus_notifier_task(bot: Bot):
@@ -142,6 +142,8 @@ async def main():
     dp.include_router(top.router)
     dp.include_router(jackpot.router)
     dp.include_router(stats.router)
+    dp.include_router(slots.router)
+    dp.include_router(events.router)
 
     asyncio.create_task(bonus_notifier_task(bot))
     asyncio.create_task(jackpot_draw_task(bot))
