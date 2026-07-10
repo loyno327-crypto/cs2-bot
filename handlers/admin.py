@@ -9,7 +9,7 @@ import asyncio
 
 import config
 import database as db
-from handlers.start import main_menu_keyboard
+from handlers.start import new_bot_keyboard, MIGRATION_TEXT
 
 router = Router()
 
@@ -121,32 +121,23 @@ async def cmd_broadcast(message: Message, bot: Bot):
 @router.message(Command("update_menu"))
 async def cmd_update_menu(message: Message, bot: Bot):
     """Секретная команда: /update_menu
-    Решает проблему "после обновления бота меню внизу не обновилось".
-
-    Дело в том, что Telegram-клиент запоминает клавиатуру (reply-кнопки
-    внизу экрана) с прошлого раза, когда бот её присылал, и НЕ обновляет
-    её сам по себе, даже если в коде бота кнопки поменялись — новую
-    клавиатуру клиент подхватит только когда бот в следующий раз пришлёт
-    сообщение с reply_markup. Чистить историю чата для этого не нужно —
-    это отдельное, необратимое действие, которое к тому же бот не может
-    сделать за пользователя.
-
-    Эта команда просто рассылает всем пользователям короткое сообщение
-    с АКТУАЛЬНОЙ клавиатурой — после этого у всех она обновится сама,
-    без необходимости просить всех вручную нажать /start."""
+    Бот "переехал" — игровое меню удалено. Эта команда теперь просто
+    рассылает всем пользователям напоминание о переезде с кнопкой на
+    новый бот (по сути то же самое, что и /broadcast, но с готовым
+    текстом и кнопкой — на случай, если кто-то ещё не видел /start)."""
     if not _is_admin(message.from_user.id):
         return
 
     user_ids = db.get_all_user_ids()
-    status_msg = await message.answer(f"🔄 Обновляю меню для {len(user_ids)} пользователей...")
+    status_msg = await message.answer(f"🔄 Рассылаю напоминание о переезде для {len(user_ids)} пользователей...")
 
     sent, failed = 0, 0
     for user_id in user_ids:
         try:
             await bot.send_message(
                 user_id,
-                "🔄 Меню бота обновлено — загляни, там могли появиться новые кнопки!",
-                reply_markup=main_menu_keyboard()
+                MIGRATION_TEXT,
+                reply_markup=new_bot_keyboard()
             )
             sent += 1
         except Exception:
@@ -154,7 +145,7 @@ async def cmd_update_menu(message: Message, bot: Bot):
         await asyncio.sleep(0.05)
 
     await status_msg.edit_text(
-        f"🔄 Обновление меню завершено.\n"
+        f"🔄 Рассылка завершена.\n"
         f"✅ Доставлено: {sent}\n"
         f"❌ Не доставлено (бот заблокирован и т.п.): {failed}"
     )
